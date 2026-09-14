@@ -1,46 +1,69 @@
-/* ============ MOCK DATA ============ */
-const CROPS = ["Rice","Wheat","Maize","Sugarcane","Cotton"];
-const STATES = ["Maharashtra","Punjab","Uttar Pradesh","Tamil Nadu","Karnataka"];
-const YEARS = [2021,2022,2023,2024];
+/* ============ THEME (light / dark) ============ */
+const themeToggle = document.getElementById("themeToggle");
+const themeIcon = document.getElementById("themeIcon");
+const SUN_PATH = '<path d="M12 3a9 9 0 1 0 9 9c0-.46-.03-.92-.08-1.36A5.4 5.4 0 0 1 12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>';
+const MOON_PATH = '<circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.5v2.2M12 19.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>';
 
-// base yield (t/ha) by crop & year — used for analysis charts and as the prediction baseline
-const cropYieldData = {
-  Rice:      {2021:3.1, 2022:3.4, 2023:3.6, 2024:3.9},
-  Wheat:     {2021:2.8, 2022:3.0, 2023:3.1, 2024:3.3},
-  Maize:     {2021:2.5, 2022:2.9, 2023:3.2, 2024:3.5},
-  Sugarcane: {2021:68,  2022:70,  2023:73,  2024:76},
-  Cotton:    {2021:1.4, 2022:1.5, 2023:1.6, 2024:1.7}
-};
-
-// crude state multipliers so state view looks distinct from crop view
-const stateFactor = {Maharashtra:1.0, Punjab:1.12, "Uttar Pradesh":0.95, "Tamil Nadu":1.04, Karnataka:0.9};
-
-const recommendations = {
-  Rice:      {season:"Kharif (Jun–Nov)", fertilizer:"Urea + DAP, split in 3 doses across tillering, panicle and grain-fill stages.", irrigation:"Maintain 5 cm standing water through vegetative growth; drain 10 days before harvest.", care:"Watch for stem borer and blast during humid spells; keep bunds weed-free."},
-  Wheat:     {season:"Rabi (Nov–Apr)", fertilizer:"NPK at sowing, top-dress nitrogen at first irrigation.", irrigation:"Light irrigation at crown-root initiation, then every 18–21 days.", care:"Monitor for yellow rust in cool, humid weather; avoid waterlogging."},
-  Maize:     {season:"Kharif or Rabi (region dependent)", fertilizer:"Nitrogen-heavy feed, split at sowing, knee-high and tasseling.", irrigation:"Keep soil moist at silking — this is the most drought-sensitive stage.", care:"Scout for fall armyworm early; thin seedlings for even spacing."},
-  Sugarcane: {season:"Year-round, best planted Feb–Mar", fertilizer:"Heavy nitrogen and potash split across the growth cycle.", irrigation:"Weekly irrigation in dry months; reduce as cane matures.", care:"Earth up regularly to support stalks and control weeds."},
-  Cotton:    {season:"Kharif (Apr–Jun sowing)", fertilizer:"Balanced NPK with boron micronutrient for boll development.", irrigation:"Irrigate at flowering and boll formation; avoid excess at sowing.", care:"Watch for pink bollworm; rotate with non-host crops next season."}
-};
-
-const alternatives = {
-  Rice:      [{name:"Maize", reason:"Similar rainfall needs with lower water demand in a dry year."}, {name:"Sugarcane", reason:"Suits the same heavy-soil, high-water fields if irrigation is reliable."}],
-  Wheat:     [{name:"Maize", reason:"Better winter-to-spring flexibility if the sowing window slips."}, {name:"Cotton", reason:"Similar soil pH tolerance, different season for crop rotation."}],
-  Maize:     [{name:"Rice", reason:"Comparable temperature range with higher local yield history."}, {name:"Wheat", reason:"Rotates well if this field's season shifts to Rabi."}],
-  Sugarcane: [{name:"Rice", reason:"Handles the same water-retentive soils with a shorter cycle."}, {name:"Cotton", reason:"Lower water need — worth considering in a low-rainfall year."}],
-  Cotton:    [{name:"Maize", reason:"Similar sowing window with less pest pressure this season."}, {name:"Wheat", reason:"Good rotation partner to break the pink bollworm cycle."}]
-};
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  themeIcon.innerHTML = t === "dark" ? SUN_PATH : MOON_PATH;
+  localStorage.setItem("hl_theme", t);
+}
+applyTheme(localStorage.getItem("hl_theme") || "light");
+themeToggle.addEventListener("click", ()=>{
+  applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
+});
 
 /* ============ STATE ============ */
 let history = JSON.parse(localStorage.getItem("hl_history") || "[]");
 let lastPrediction = JSON.parse(localStorage.getItem("hl_last") || "null");
 let user = JSON.parse(localStorage.getItem("hl_user") || "null");
 let charts = {};
+let YEARS_LIST = [];
 
 function saveState(){
   localStorage.setItem("hl_history", JSON.stringify(history));
   localStorage.setItem("hl_last", JSON.stringify(lastPrediction));
   localStorage.setItem("hl_user", JSON.stringify(user));
+}
+
+async function api(path, opts){
+  const res = await fetch(path, opts);
+  if(!res.ok){
+    const body = await res.json().catch(()=>({}));
+    throw new Error(body.error || ("Request failed (" + res.status + ")"));
+  }
+  return res.json();
+}
+
+function populateSelectObjs(id, items, selectedValue){
+  const el = document.getElementById(id);
+  el.innerHTML = items.map(i =>
+    `<option value="${i.value}"${i.value === selectedValue ? " selected" : ""}>${i.label}</option>`
+  ).join("");
+}
+
+/* ============ LOAD METADATA FROM BACKEND ============ */
+async function loadMeta(){
+  try{
+    const meta = await api("/api/meta");
+    populateSelectObjs("p-crop", meta.crops, "Rice");
+    populateSelectObjs("p-state", meta.states, "Punjab");
+    populateSelectObjs("p-season", meta.seasons, "Kharif");
+    populateSelectObjs("a-crop", meta.crops, "Rice");
+    populateSelectObjs("a-state", meta.states, "Punjab");
+
+    const yearsRes = await api("/api/years");
+    YEARS_LIST = yearsRes.years;
+    const latest = YEARS_LIST[YEARS_LIST.length - 1];
+    document.getElementById("a-year").innerHTML =
+      YEARS_LIST.map(y => `<option${y === latest ? " selected" : ""}>${y}</option>`).join("");
+
+    viewCrop();
+  }catch(err){
+    document.body.insertAdjacentHTML("afterbegin",
+      `<div class="server-warning">Can't reach the backend at this address. Make sure <code>python app.py</code> is running and you're viewing this page via that server (e.g. http://127.0.0.1:5000), not by opening index.html directly.</div>`);
+  }
 }
 
 /* ============ NAVIGATION ============ */
@@ -52,7 +75,6 @@ function goTo(name){
   window.scrollTo({top:0, behavior:"smooth"});
   if(name === "dashboard") renderDashboard();
   if(name === "profile") renderProfile();
-  if(name === "analysis" && !charts.crop) viewCrop();
 }
 document.querySelectorAll("[data-nav]").forEach(el=>{
   el.addEventListener("click", e=>{ e.preventDefault(); goTo(el.dataset.nav); });
@@ -81,9 +103,30 @@ function switchModalTab(tab){
 }
 document.querySelectorAll(".modal-tab").forEach(t=> t.addEventListener("click", ()=> switchModalTab(t.dataset.modaltab)));
 
+/* ---- Name field: letters (A-Z, a-z) and spaces ONLY, no digits/symbols ---- */
+const nameInput = document.getElementById("u-name");
+const ALLOWED_NAME = /[^A-Za-z ]/g;
+nameInput.addEventListener("input", ()=>{
+  const pos = nameInput.selectionStart;
+  const before = nameInput.value;
+  nameInput.value = before.replace(ALLOWED_NAME, "");
+  const removed = before.length - nameInput.value.length;
+  nameInput.setSelectionRange(pos - removed, pos - removed);
+});
+nameInput.addEventListener("keypress", e=>{
+  if(!/[A-Za-z ]/.test(e.key)) e.preventDefault();
+});
+nameInput.addEventListener("paste", e=>{
+  e.preventDefault();
+  const text = (e.clipboardData || window.clipboardData).getData("text").replace(ALLOWED_NAME, "");
+  document.execCommand("insertText", false, text);
+});
+
 document.getElementById("userForm").addEventListener("submit", e=>{
   e.preventDefault();
-  user = {name: document.getElementById("u-name").value, email: document.getElementById("u-email").value, role:"user"};
+  const cleanName = nameInput.value.replace(ALLOWED_NAME, "").trim();
+  if(!cleanName){ nameInput.focus(); return; }
+  user = {name: cleanName, email: document.getElementById("u-email").value, role:"user"};
   saveState();
   closeModal("login");
   document.getElementById("openLogin").textContent = user.name.split(" ")[0];
@@ -99,64 +142,83 @@ document.getElementById("adminForm").addEventListener("submit", e=>{
 });
 
 /* ============ PREDICTION ============ */
-const rainIn = document.getElementById("p-rain"), tempIn = document.getElementById("p-temp"),
-      fertIn = document.getElementById("p-fert"), phIn = document.getElementById("p-ph");
-rainIn.addEventListener("input", ()=> document.getElementById("rainOut").textContent = rainIn.value);
-tempIn.addEventListener("input", ()=> document.getElementById("tempOut").textContent = tempIn.value);
-fertIn.addEventListener("input", ()=> document.getElementById("fertOut").textContent = fertIn.value);
-phIn.addEventListener("input", ()=> document.getElementById("phOut").textContent = phIn.value);
+const pestIn = document.getElementById("p-pest");
+pestIn.addEventListener("input", ()=> document.getElementById("pestOut").textContent = pestIn.value);
 
-// demo formula: base historical average for the crop, nudged by how far inputs sit from an "ideal" midpoint
-function estimateYield(crop, rain, temp, fert, ph){
-  const base = cropYieldData[crop][2024];
-  const rainScore = 1 - Math.min(Math.abs(rain-1000)/1000, 0.35);
-  const tempScore = 1 - Math.min(Math.abs(temp-26)/26, 0.3);
-  const fertScore = 1 - Math.min(Math.abs(fert-140)/200, 0.25);
-  const phScore = 1 - Math.min(Math.abs(ph-6.5)/6.5, 0.2);
-  const factor = (rainScore + tempScore + fertScore + phScore) / 4;
-  return Math.max(base * (0.7 + factor * 0.55), base * 0.4);
+// rainfall & fertilizer are no longer collected from the person — the model
+// still needs a value for them, so we send typical Indian averages as defaults
+const DEFAULT_RAINFALL = 1200;   // mm/year
+const DEFAULT_FERTILIZER = 120;  // kg/hectare
+
+function currentInputs(){
+  return {
+    crop: document.getElementById("p-crop").value,
+    state: document.getElementById("p-state").value,
+    season: document.getElementById("p-season").value,
+    area: +document.getElementById("p-area").value,
+    rainfall: DEFAULT_RAINFALL,
+    fertilizer: DEFAULT_FERTILIZER,
+    pesticide: +pestIn.value,
+  };
 }
 
-document.getElementById("predictForm").addEventListener("submit", e=>{
+document.getElementById("predictForm").addEventListener("submit", async e=>{
   e.preventDefault();
-  const crop = document.getElementById("p-crop").value;
-  const state = document.getElementById("p-state").value;
-  const season = document.getElementById("p-season").value;
-  const rain = +rainIn.value, temp = +tempIn.value, fert = +fertIn.value, ph = +phIn.value;
-  const yieldVal = estimateYield(crop, rain, temp, fert, ph);
+  const errEl = document.getElementById("predictError");
+  errEl.hidden = true;
+  const btn = document.getElementById("predictBtn");
+  const original = btn.textContent;
+  btn.textContent = "Predicting…"; btn.disabled = true;
 
-  lastPrediction = {crop, state, season, rain, temp, fert, ph, yieldVal, date: new Date().toISOString()};
-  history.unshift(lastPrediction);
-  saveState();
+  const inputs = currentInputs();
+  try{
+    const res = await api("/api/predict", {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(inputs)
+    });
+    lastPrediction = {...inputs, yieldVal: res.yield, date: new Date().toISOString()};
+    history.unshift(lastPrediction);
+    saveState();
 
-  document.getElementById("resultEmpty").hidden = true;
-  const body = document.getElementById("resultBody");
-  body.hidden = false;
-  document.getElementById("resCrop").textContent = crop;
-  document.getElementById("resSeason").textContent = season + " · " + state;
-  document.getElementById("resNum").textContent = yieldVal.toFixed(2);
+    document.getElementById("resultEmpty").hidden = true;
+    document.getElementById("resultBody").hidden = false;
+    document.getElementById("resCrop").textContent = inputs.crop;
+    document.getElementById("resSeason").textContent = inputs.season + " · " + inputs.state;
+    document.getElementById("resNum").textContent = res.yield.toFixed(2);
+  }catch(err){
+    errEl.textContent = "Couldn't get a prediction: " + err.message;
+    errEl.hidden = false;
+  }finally{
+    btn.textContent = original; btn.disabled = false;
+  }
 });
 
 document.getElementById("openWhatIf").addEventListener("click", ()=>{
   if(!lastPrediction) return;
-  document.getElementById("wiRain").value = lastPrediction.rain;
-  document.getElementById("wiFert").value = lastPrediction.fert;
+  document.getElementById("wiRain").value = lastPrediction.rainfall;
+  document.getElementById("wiFert").value = lastPrediction.fertilizer;
   updateWhatIf();
   openModal("whatif");
 });
-function updateWhatIf(){
+async function updateWhatIf(){
   const r = +document.getElementById("wiRain").value, f = +document.getElementById("wiFert").value;
   document.getElementById("wiRainVal").textContent = r;
   document.getElementById("wiFertVal").textContent = f;
-  const y = estimateYield(lastPrediction.crop, r, lastPrediction.temp, f, lastPrediction.ph);
-  document.getElementById("wiNum").textContent = y.toFixed(2);
-  const delta = y - lastPrediction.yieldVal;
-  const d = document.getElementById("wiDelta");
-  d.textContent = (delta >= 0 ? "+" : "") + delta.toFixed(2) + " t/ha vs. your prediction";
-  d.style.color = delta >= 0 ? "var(--green)" : "var(--terracotta)";
+  try{
+    const res = await api("/api/predict", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({...lastPrediction, rainfall:r, fertilizer:f})
+    });
+    document.getElementById("wiNum").textContent = res.yield.toFixed(2);
+    const delta = res.yield - lastPrediction.yieldVal;
+    const d = document.getElementById("wiDelta");
+    d.textContent = (delta >= 0 ? "+" : "") + delta.toFixed(2) + " t/ha vs. your prediction";
+    d.style.color = delta >= 0 ? "var(--green)" : "var(--terracotta)";
+  }catch(err){ /* silently ignore mid-drag errors */ }
 }
-document.getElementById("wiRain").addEventListener("input", updateWhatIf);
-document.getElementById("wiFert").addEventListener("input", updateWhatIf);
+let wiTimer;
+function debouncedWhatIf(){ clearTimeout(wiTimer); wiTimer = setTimeout(updateWhatIf, 180); }
+document.getElementById("wiRain").addEventListener("input", debouncedWhatIf);
+document.getElementById("wiFert").addEventListener("input", debouncedWhatIf);
 
 document.getElementById("openProfit").addEventListener("click", ()=>{
   if(!lastPrediction) return;
@@ -166,7 +228,7 @@ document.getElementById("openProfit").addEventListener("click", ()=>{
 function updateProfit(){
   const price = +document.getElementById("pr-price").value;
   const cost = +document.getElementById("pr-cost").value;
-  const area = document.getElementById("p-area").value ? +document.getElementById("p-area").value : 1;
+  const area = lastPrediction.area || 1;
   const revenue = lastPrediction.yieldVal * price * area;
   const totalCost = cost * area;
   const profit = revenue - totalCost;
@@ -191,82 +253,86 @@ document.querySelectorAll("#analysisTabs .tab").forEach(t=>{
 function barChart(ctx, labels, data, color){
   return new Chart(ctx, {
     type:"bar",
-    data:{labels, datasets:[{data, backgroundColor:color, borderRadius:3, maxBarThickness:46}]},
+    data:{labels, datasets:[{data, backgroundColor:color, borderRadius:3, maxBarThickness:40}]},
     options:{
       responsive:true,
       plugins:{legend:{display:false}},
       scales:{
-        x:{grid:{display:false}, ticks:{font:{family:"IBM Plex Mono", size:11}}},
+        x:{grid:{display:false}, ticks:{font:{family:"IBM Plex Mono", size:10}}},
         y:{grid:{color:"#DEDAC4"}, ticks:{font:{family:"IBM Plex Mono", size:11}}}
       }
     }
   });
 }
 
-function viewCrop(){
+async function viewCrop(){
   const crop = document.getElementById("a-crop").value;
-  const data = YEARS.map(y => +cropYieldData[crop][y].toFixed(2));
-  const best = YEARS[data.indexOf(Math.max(...data))];
+  if(!crop) return;
+  const res = await api("/api/crop-history?crop=" + encodeURIComponent(crop));
   document.getElementById("cropMeta").innerHTML = `
-    <div><span class="m-num">${crop}</span><span class="m-lbl">crop</span></div>
-    <div><span class="m-num">${YEARS.length * 30}</span><span class="m-lbl">records</span></div>
-    <div><span class="m-num">${best}</span><span class="m-lbl">best year</span></div>`;
+    <div><span class="m-num">${res.crop}</span><span class="m-lbl">crop</span></div>
+    <div><span class="m-num">${res.records.toLocaleString("en-IN")}</span><span class="m-lbl">records</span></div>
+    <div><span class="m-num">${res.best_year}</span><span class="m-lbl">best year</span></div>`;
   if(charts.crop) charts.crop.destroy();
-  charts.crop = barChart(document.getElementById("cropChart"), YEARS, data, "#C79A3E");
+  charts.crop = barChart(document.getElementById("cropChart"), res.years, res.values, "#C79A3E");
 }
 document.getElementById("viewCropBtn").addEventListener("click", viewCrop);
 
-function viewState(){
+async function viewState(){
   const state = document.getElementById("a-state").value;
-  const factor = stateFactor[state];
-  const data = CROPS.map(c => +(cropYieldData[c][2024] * factor).toFixed(2));
+  if(!state) return;
+  const res = await api("/api/state-history?state=" + encodeURIComponent(state));
   document.getElementById("stateMeta").innerHTML = `
-    <div><span class="m-num">${state}</span><span class="m-lbl">state</span></div>
-    <div><span class="m-num">${CROPS.length}</span><span class="m-lbl">crops tracked</span></div>
-    <div><span class="m-num">2024</span><span class="m-lbl">latest season</span></div>`;
+    <div><span class="m-num">${res.state}</span><span class="m-lbl">state</span></div>
+    <div><span class="m-num">${res.records.toLocaleString("en-IN")}</span><span class="m-lbl">records</span></div>
+    <div><span class="m-num">${res.top_crops.slice(0,3).join(", ")}</span><span class="m-lbl">top crops grown</span></div>`;
   if(charts.state) charts.state.destroy();
-  charts.state = barChart(document.getElementById("stateChart"), CROPS, data, "#3C6E8F");
+  charts.state = barChart(document.getElementById("stateChart"), res.years, res.values, "#3C6E8F");
 }
 document.getElementById("viewStateBtn").addEventListener("click", viewState);
 
-function viewYear(){
-  const year = +document.getElementById("a-year").value;
-  const data = CROPS.map(c => +cropYieldData[c][year].toFixed(2));
+async function viewYear(){
+  const year = document.getElementById("a-year").value;
+  if(!year) return;
+  const res = await api("/api/year-history?year=" + encodeURIComponent(year));
   document.getElementById("yearMeta").innerHTML = `
-    <div><span class="m-num">${year}</span><span class="m-lbl">year</span></div>
-    <div><span class="m-num">${CROPS.length}</span><span class="m-lbl">crops compared</span></div>`;
+    <div><span class="m-num">${res.year}</span><span class="m-lbl">year</span></div>
+    <div><span class="m-num">${res.records.toLocaleString("en-IN")}</span><span class="m-lbl">records that year</span></div>`;
   if(charts.year) charts.year.destroy();
-  charts.year = barChart(document.getElementById("yearChart"), CROPS, data, "#4B7A51");
+  charts.year = barChart(document.getElementById("yearChart"), res.crops, res.values, "#4B7A51");
 }
 document.getElementById("viewYearBtn").addEventListener("click", viewYear);
 
-/* ============ CHATBOT ============ */
-function chatReply(msg){
-  const m = msg.toLowerCase();
-  const crop = CROPS.find(c => m.includes(c.toLowerCase()));
-  if(crop && (m.includes("fertiliz") || m.includes("fertilis"))) return `${crop}: ${recommendations[crop].fertilizer}`;
-  if(crop && m.includes("season")) return `${crop} grows best in the ${recommendations[crop].season} season.`;
-  if(crop && m.includes("irrigat") || crop && m.includes("water")) return `${crop} irrigation: ${recommendations[crop].irrigation}`;
-  if(crop && (m.includes("trend") || m.includes("yield"))){
-    const d = cropYieldData[crop];
-    return `${crop} yield moved from ${d[2021]} t/ha in 2021 to ${d[2024]} t/ha in 2024 — a steady rise across the historical record.`;
-  }
-  if(crop) return `${crop} best season is ${recommendations[crop].season}. Ask me about its fertilizer, irrigation or yield trend for more detail.`;
-  if(m.includes("hello") || m.includes("hi")) return "Hello — ask me about any crop's yield trend, fertilizer needs, or best planting season.";
-  return "I can help with crop yield trends, fertilizer, irrigation and season questions — try naming a crop, e.g. \"wheat irrigation\".";
-}
-document.getElementById("chatForm").addEventListener("submit", e=>{
-  e.preventDefault();
-  const input = document.getElementById("chatInput");
-  const val = input.value.trim();
-  if(!val) return;
-  const log = document.getElementById("chatLog");
-  log.insertAdjacentHTML("beforeend", `<div class="chat-msg user">${escapeHtml(val)}</div>`);
-  log.insertAdjacentHTML("beforeend", `<div class="chat-msg bot">${escapeHtml(chatReply(val))}</div>`);
-  input.value = "";
-  log.scrollTop = log.scrollHeight;
-});
+/* ============ CHATBOT (talks to /api/chat — shared by Analysis tab + floating widget) ============ */
 function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function wireChatForm(formId, inputId, logId){
+  document.getElementById(formId).addEventListener("submit", async e=>{
+    e.preventDefault();
+    const input = document.getElementById(inputId);
+    const val = input.value.trim();
+    if(!val) return;
+    const log = document.getElementById(logId);
+    log.insertAdjacentHTML("beforeend", `<div class="chat-msg user">${escapeHtml(val)}</div>`);
+    input.value = "";
+    log.scrollTop = log.scrollHeight;
+    try{
+      const res = await api("/api/chat", {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({message: val})
+      });
+      log.insertAdjacentHTML("beforeend", `<div class="chat-msg bot">${escapeHtml(res.reply)}</div>`);
+    }catch(err){
+      log.insertAdjacentHTML("beforeend", `<div class="chat-msg bot">Sorry, I can't reach the server right now — make sure app.py is running.</div>`);
+    }
+    log.scrollTop = log.scrollHeight;
+  });
+}
+wireChatForm("chatForm", "chatInput", "chatLog");
+wireChatForm("fabForm", "fabInput", "fabLog");
+
+const fabBtn = document.getElementById("fabChatBtn"), fabPanel = document.getElementById("fabPanel");
+fabBtn.addEventListener("click", ()=> fabPanel.classList.toggle("open"));
+document.getElementById("fabClose").addEventListener("click", ()=> fabPanel.classList.remove("open"));
 
 /* ============ DASHBOARD ============ */
 document.querySelectorAll(".dash-link").forEach(b=>{
@@ -278,22 +344,28 @@ document.querySelectorAll(".dash-link").forEach(b=>{
   });
 });
 
-function renderDashboard(){
+async function renderDashboard(){
   const ref = lastPrediction ? lastPrediction.crop : "Rice";
-  const rec = recommendations[ref];
-  document.getElementById("smartContent").innerHTML = `
-    <p class="page-sub" style="margin-bottom:20px;">Based on your ${lastPrediction ? "latest prediction (" + ref + ")" : "default crop (Rice — run a prediction to personalize this)"}.</p>
-    <div class="rec-grid">
-      <div class="rec-item"><h4>Suitable season</h4><p>${rec.season}</p></div>
-      <div class="rec-item"><h4>Fertilizer recommendation</h4><p>${rec.fertilizer}</p></div>
-      <div class="rec-item"><h4>Irrigation recommendation</h4><p>${rec.irrigation}</p></div>
-      <div class="rec-item"><h4>Crop-care advice</h4><p>${rec.care}</p></div>
-    </div>`;
+  const refLabel = lastPrediction ? lastPrediction.crop : "Rice";
 
-  const alts = alternatives[ref];
-  document.getElementById("altContent").innerHTML =
-    `<p class="page-sub" style="margin-bottom:6px;">Other crops that may suit this field, based on ${ref}'s profile.</p>` +
-    alts.map(a => `<div class="alt-card"><div><h4>${a.name}</h4><p>${a.reason}</p></div><span class="alt-tag">alternative</span></div>`).join("");
+  try{
+    const rec = await api("/api/recommendation?crop=" + encodeURIComponent(ref));
+    document.getElementById("smartContent").innerHTML = `
+      <p class="page-sub" style="margin-bottom:20px;">Based on your ${lastPrediction ? "latest prediction (" + rec.crop + ")" : "default crop (Rice — run a prediction to personalize this)"}.</p>
+      <div class="rec-grid">
+        <div class="rec-item"><h4>Suitable season</h4><p>${rec.season}</p></div>
+        <div class="rec-item"><h4>Fertilizer recommendation</h4><p>${rec.fertilizer}</p></div>
+        <div class="rec-item"><h4>Irrigation recommendation</h4><p>${rec.irrigation}</p></div>
+        <div class="rec-item"><h4>Crop-care advice</h4><p>${rec.care}</p></div>
+      </div>`;
+
+    const altRes = await api("/api/alternatives?crop=" + encodeURIComponent(ref));
+    document.getElementById("altContent").innerHTML =
+      `<p class="page-sub" style="margin-bottom:6px;">Other crops that may suit this field, based on ${rec.crop}'s profile.</p>` +
+      altRes.alternatives.map(a => `<div class="alt-card"><div><h4>${a.name}</h4><p>${a.reason}</p></div><span class="alt-tag">alternative</span></div>`).join("");
+  }catch(err){
+    document.getElementById("smartContent").innerHTML = `<p class="page-sub">Couldn't load recommendations — make sure the backend server is running.</p>`;
+  }
 
   const body = document.getElementById("historyBody");
   document.getElementById("historyEmpty").hidden = history.length > 0;
@@ -330,4 +402,4 @@ function renderProfile(){
 
 /* ============ INIT ============ */
 if(user) document.getElementById("openLogin").textContent = user.role === "admin" ? "Admin" : user.name.split(" ")[0];
-viewCrop();
+loadMeta();
